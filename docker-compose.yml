@@ -1,0 +1,64 @@
+services:
+  gmail-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gmail-mcp-server
+    restart: unless-stopped
+    
+    ports:
+      - "8001:8000"
+    
+    volumes:
+      # Persist OAuth credentials
+      - ./credentials:/app/credentials
+      # Custom categories configuration
+      - ./config:/app/config:ro
+    
+    environment:
+      # Google OAuth (required)
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      
+      # Server config
+      - MCP_SERVER_HOST=0.0.0.0
+      - MCP_SERVER_PORT=8000
+      - LOG_LEVEL=INFO
+      
+      # Home Assistant integration (optional)
+      - HA_WEBHOOK_URL=${HA_WEBHOOK_URL:-}
+      - HA_LONG_LIVED_TOKEN=${HA_LONG_LIVED_TOKEN:-}
+    
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Optional: OAuth setup container (run once for initial auth)
+  gmail-mcp-auth:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gmail-mcp-auth
+    profiles:
+      - setup
+    
+    volumes:
+      - ./credentials:/app/credentials
+    
+    environment:
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - HEADLESS=true
+    
+    # Override to run auth setup
+    command: ["python", "-m", "mcp_gmail.auth"]
+    
+    # Interactive mode for OAuth flow
+    stdin_open: true
+    tty: true

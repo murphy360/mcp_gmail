@@ -1,0 +1,139 @@
+# Email Categories Configuration
+# Define patterns and rules for categorizing emails
+
+categories:
+  navy:
+    name: "Navy / Military"
+    description: "Navy and military-related communications"
+    priority: high
+    matchers:
+      senders:
+        - "@navy.mil"
+        - "@usmc.mil"
+        - "@mail.mil"
+        - "@us.navy.mil"
+        - "navy"
+      subjects:
+        - "orders"
+        - "deployment"
+        - "PCS"
+        - "command"
+        - "drill"
+        - "reserve"
+        - "military"
+        - "NAVADMIN"
+      labels:
+        - "Navy"
+        - "Military"
+
+  kids:
+    name: "Kids & Family Events"
+    description: "School, activities, and family-related emails"
+    priority: high
+    matchers:
+      senders:
+        - "@school.edu"
+        - "@k12"
+        - "schoology"
+        - "parentlink"
+        - "sportsengine"
+        - "teamsnap"
+        - "signupgenius"
+        - "evite"
+        - "shutterfly"
+      subjects:
+        - "school"
+        - "parent"
+        - "student"
+        - "class"
+        - "homework"
+        - "practice"
+        - "game"
+        - "recital"
+        - "tournament"
+        - "carpool"
+        - "permission"
+        - "field trip"
+      labels:
+        - "Kids"
+        - "Family"
+        - "School"
+
+  financial:
+    name: "Financial & Bills"
+    description: "Banking, bills, and financial notifications"
+    priority: high
+    matchers:
+      senders:
+        - "@chase.com"
+        - "@bankofamerica.com"
+        - "@wellsfargo.com"
+        - "@usaa.com"
+        - "@navyfederal.org"
+        - "@paypal.com"
+        - "@venmo.com"
+        - "@mint.com"
+        - "@turbotax"
+        - "@irs.gov"
+        - "billing"
+        - "invoice"
+      subjects:
+        - "statement"
+        - "payment"
+        - "bill"
+        - "invoice"
+        - "transaction"
+        - "balance"
+        - "account"
+        - "credit"
+        - "debit"
+        - "tax"
+        - "refund"
+      labels:
+        - "Finance"
+        - "Bills"
+
+  action_required:
+    name: "Action Items"
+    description: "Emails requiring response or action"
+    priority: critical
+    matchers:
+      subjects:
+        - "action required"
+        - "action needed"
+        - "response required"
+        - "please respond"
+        - "urgent"
+        - "deadline"
+        - "due date"
+        - "reminder"
+        - "follow up"
+        - "follow-up"
+        - "waiting for"
+        - "approval needed"
+        - "sign"
+        - "confirm"
+        - "RSVP"
+      labels:
+        - "Action"
+        - "TODO"
+        - "Follow Up"
+
+# Default category for uncategorized emails
+default_category:
+  name: "General"
+  priority: normal
+
+# Summary settings
+summary:
+  # How many days back to look for daily summary
+  daily_lookback_hours: 24
+  
+  # Maximum emails to include per category in summary
+  max_per_category: 10
+  
+  # Include read emails in summary
+  include_read: false
+  
+  # Time to generate daily summary (24h format)
+  daily_summary_time: "07:00"
