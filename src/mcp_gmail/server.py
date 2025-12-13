@@ -482,18 +482,32 @@ def main():
     import sys
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         stream=sys.stderr,
     )
 
+    print("DEBUG: MCP Server starting...", file=sys.stderr, flush=True)
     logger.info("Starting Gmail MCP Server...")
 
     async def run():
-        async with stdio_server() as (read_stream, write_stream):
-            await server.run(read_stream, write_stream, server.create_initialization_options())
+        print("DEBUG: Entering async run", file=sys.stderr, flush=True)
+        try:
+            async with stdio_server() as (read_stream, write_stream):
+                print("DEBUG: stdio_server connected", file=sys.stderr, flush=True)
+                init_options = server.create_initialization_options()
+                print(f"DEBUG: init_options created: {init_options}", file=sys.stderr, flush=True)
+                await server.run(read_stream, write_stream, init_options)
+                print("DEBUG: server.run completed", file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"DEBUG: Exception in run: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            raise
 
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except Exception as e:
+        print(f"DEBUG: Exception in main: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        raise
 
 
 if __name__ == "__main__":
