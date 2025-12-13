@@ -94,16 +94,6 @@ async def handle_sse_root(request: Request) -> Response:
         logger.info(f"MCP SSE connection closed at /sse from {request.client}")
     
     return Response()
-                streams[0],
-                streams[1],
-                mcp_server.create_initialization_options(),
-            )
-    except Exception as e:
-        logger.error(f"MCP SSE connection error at /sse: {e}")
-    finally:
-        logger.info(f"MCP SSE connection closed at /sse from {request.client}")
-    
-    return Response()
 
 
 @asynccontextmanager
