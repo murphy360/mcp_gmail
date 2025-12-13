@@ -157,6 +157,35 @@ async def list_tools() -> list[Tool]:
                 "properties": {},
             },
         ),
+        Tool(
+            name="gmail_mark_as_read",
+            description="Mark emails as read. Can mark specific emails by ID or bulk mark by search query. "
+            "Examples: 'from:newsletter@example.com', 'older_than:7d is:unread', 'subject:promotion'",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "message_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of specific Gmail message IDs to mark as read",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Gmail search query to find emails to mark as read (e.g., 'from:newsletter@example.com older_than:7d')",
+                    },
+                    "max_emails": {
+                        "type": "integer",
+                        "description": "Maximum number of emails to mark as read when using query (safety limit, default: 100, max: 500)",
+                        "default": 100,
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Must be true to actually mark emails as read. Set to false to preview what would be marked.",
+                        "default": False,
+                    },
+                },
+            },
+        ),
     ]
 
 
@@ -256,6 +285,68 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     text=_format_categories_config(categories),
                 )
             ]
+
+        elif name == "gmail_mark_as_read":
+            message_ids = arguments.get("message_ids", [])
+            query = arguments.get("query")
+            max_emails = min(arguments.get("max_emails", 100), 500)  # Cap at 500 for safety
+            confirm = arguments.get("confirm", False)
+            
+            # Validate input
+            if not message_ids and not query:
+                return [TextContent(
+                    type="text",
+                    text="Error: Must provide either 'message_ids' or 'query' to specify which emails to mark as read."
+                )]
+            
+            # If using query, first show what would be affected
+            if query:
+                if not confirm:
+                    # Preview mode - show what would be marked
+                    search_results = await client.search_emails(f"{query} is:unread", max_emails)
+                    if not search_results:
+                        return [TextContent(
+                            type="text",
+                            text=f"No unread emails match the query: {query}"
+                        )]
+                    
+                    lines = [
+                        f"⚠️ Preview: The following {len(search_results)} email(s) would be marked as read:\n",
+                    ]
+                    for email in search_results[:20]:  # Show first 20
+                        lines.append(f"• {email.subject}")
+                        lines.append(f"  From: {email.sender.email}")
+                        lines.append(f"  Date: {email.date.strftime('%Y-%m-%d %H:%M')}")
+                        lines.append("")
+                    
+                    if len(search_results) > 20:
+                        lines.append(f"... and {len(search_results) - 20} more\n")
+                    
+                    lines.append("To proceed, call this tool again with confirm=true")
+                    
+                    return [TextContent(type="text", text="\n".join(lines))]
+                else:
+                    # Actually mark as read
+                    result = await client.mark_as_read_by_query(query, max_emails)
+                    return [TextContent(
+                        type="text",
+                        text=f"✅ {result['message']}\n\nMatched: {result['matched']}\nMarked as read: {result['success']}"
+                        + (f"\nErrors: {result['errors']}" if result['errors'] else "")
+                    )]
+            else:
+                # Mark specific message IDs
+                if not confirm:
+                    return [TextContent(
+                        type="text",
+                        text=f"⚠️ Preview: {len(message_ids)} email(s) would be marked as read.\n\nTo proceed, call this tool again with confirm=true"
+                    )]
+                else:
+                    result = await client.mark_as_read(message_ids)
+                    return [TextContent(
+                        type="text",
+                        text=f"✅ Marked {result['success']} email(s) as read."
+                        + (f"\nErrors: {result['errors']}" if result['errors'] else "")
+                    )]
 
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]

@@ -44,11 +44,12 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
 
-    # Gmail API Scopes (read-only for now)
+    # Gmail API Scopes
     gmail_scopes: list[str] = Field(
         default=[
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/gmail.labels",
+            "https://www.googleapis.com/auth/gmail.modify",  # For marking as read/unread
         ],
         description="Gmail API scopes",
     )
