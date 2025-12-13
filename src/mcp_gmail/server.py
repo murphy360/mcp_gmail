@@ -186,6 +186,48 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="gmail_send_email",
+            description="Send an email. Can send new emails or reply to existing threads.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of recipient email addresses",
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Email subject line",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Email body text (plain text)",
+                    },
+                    "cc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "CC recipients (optional)",
+                    },
+                    "bcc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "BCC recipients (optional)",
+                    },
+                    "reply_to_message_id": {
+                        "type": "string",
+                        "description": "Message ID to reply to (optional, for threading)",
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Must be true to actually send the email. Set to false to preview.",
+                        "default": False,
+                    },
+                },
+                "required": ["to", "subject", "body"],
+            },
+        ),
     ]
 
 
@@ -346,6 +388,64 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                         type="text",
                         text=f"✅ Marked {result['success']} email(s) as read."
                         + (f"\nErrors: {result['errors']}" if result['errors'] else "")
+                    )]
+
+        elif name == "gmail_send_email":
+            to = arguments.get("to", [])
+            subject = arguments.get("subject", "")
+            body = arguments.get("body", "")
+            cc = arguments.get("cc", [])
+            bcc = arguments.get("bcc", [])
+            reply_to_message_id = arguments.get("reply_to_message_id")
+            confirm = arguments.get("confirm", False)
+            
+            # Validate required fields
+            if not to:
+                return [TextContent(type="text", text="Error: 'to' recipients are required.")]
+            if not subject:
+                return [TextContent(type="text", text="Error: 'subject' is required.")]
+            if not body:
+                return [TextContent(type="text", text="Error: 'body' is required.")]
+            
+            if not confirm:
+                # Preview mode
+                lines = [
+                    "⚠️ Preview: The following email would be sent:\n",
+                    f"To: {', '.join(to)}",
+                ]
+                if cc:
+                    lines.append(f"CC: {', '.join(cc)}")
+                if bcc:
+                    lines.append(f"BCC: {', '.join(bcc)}")
+                lines.append(f"Subject: {subject}")
+                if reply_to_message_id:
+                    lines.append(f"Reply to message: {reply_to_message_id}")
+                lines.append(f"\n--- Body ---\n{body[:500]}")
+                if len(body) > 500:
+                    lines.append(f"\n... ({len(body) - 500} more characters)")
+                lines.append("\n\nTo send this email, call this tool again with confirm=true")
+                
+                return [TextContent(type="text", text="\n".join(lines))]
+            else:
+                # Actually send the email
+                result = await client.send_email(
+                    to=to,
+                    subject=subject,
+                    body=body,
+                    cc=cc if cc else None,
+                    bcc=bcc if bcc else None,
+                    reply_to_message_id=reply_to_message_id,
+                )
+                
+                if result["success"]:
+                    return [TextContent(
+                        type="text",
+                        text=f"✅ Email sent successfully!\n\nTo: {', '.join(result['to'])}\nSubject: {result['subject']}\nMessage ID: {result['message_id']}"
+                    )]
+                else:
+                    return [TextContent(
+                        type="text",
+                        text=f"❌ Failed to send email.\n\nError: {result['error']}"
                     )]
 
         else:

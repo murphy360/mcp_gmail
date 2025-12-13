@@ -50,6 +50,7 @@ class Settings(BaseSettings):
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/gmail.labels",
             "https://www.googleapis.com/auth/gmail.modify",  # For marking as read/unread
+            "https://www.googleapis.com/auth/gmail.send",  # For sending emails
         ],
         description="Gmail API scopes",
     )

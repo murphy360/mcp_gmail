@@ -4,6 +4,7 @@ import base64
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from email.mime.text import MIMEText
 from email.utils import parseaddr, parsedate_to_datetime
 from typing import Optional
 
@@ -567,4 +568,106 @@ class GmailClient:
         except HttpError as e:
             logger.error(f"Failed to search and mark emails: {e}")
             return {"matched": 0, "success": 0, "errors": [str(e)], "message": f"Error: {e}"}
+
+    async def send_email(
+        self,
+        to: list[str],
+        subject: str,
+        body: str,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        reply_to_message_id: str | None = None,
+    ) -> dict:
+        """Send an email.
+        
+        Args:
+            to: List of recipient email addresses
+            subject: Email subject
+            body: Email body (plain text)
+            cc: Optional CC recipients
+            bcc: Optional BCC recipients
+            reply_to_message_id: Optional message ID to reply to (for threading)
+            
+        Returns:
+            Dict with sent message info or error
+        """
+        try:
+            # Create the email message
+            message = MIMEText(body)
+            message['to'] = ', '.join(to)
+            message['subject'] = subject
+            
+            if cc:
+                message['cc'] = ', '.join(cc)
+            if bcc:
+                message['bcc'] = ', '.join(bcc)
+            
+            # Handle reply threading
+            thread_id = None
+            if reply_to_message_id:
+                # Get the original message to get thread ID and references
+                try:
+                    original = self.service.users().messages().get(
+                        userId="me", 
+                        id=reply_to_message_id,
+                        format="metadata",
+                        metadataHeaders=["Message-ID", "References", "In-Reply-To"]
+                    ).execute()
+                    
+                    thread_id = original.get("threadId")
+                    
+                    # Get original Message-ID for threading headers
+                    headers = original.get("payload", {}).get("headers", [])
+                    original_message_id = None
+                    references = None
+                    
+                    for header in headers:
+                        if header["name"].lower() == "message-id":
+                            original_message_id = header["value"]
+                        elif header["name"].lower() == "references":
+                            references = header["value"]
+                    
+                    # Set threading headers
+                    if original_message_id:
+                        message['In-Reply-To'] = original_message_id
+                        if references:
+                            message['References'] = f"{references} {original_message_id}"
+                        else:
+                            message['References'] = original_message_id
+                            
+                except HttpError as e:
+                    logger.warning(f"Could not get original message for threading: {e}")
+            
+            # Encode the message
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+            
+            # Send the message
+            body_data = {'raw': raw_message}
+            if thread_id:
+                body_data['threadId'] = thread_id
+                
+            sent_message = self.service.users().messages().send(
+                userId="me",
+                body=body_data
+            ).execute()
+            
+            logger.info(f"Email sent successfully. Message ID: {sent_message['id']}")
+            
+            return {
+                "success": True,
+                "message_id": sent_message["id"],
+                "thread_id": sent_message.get("threadId"),
+                "to": to,
+                "subject": subject,
+            }
+            
+        except HttpError as e:
+            logger.error(f"Failed to send email: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "to": to,
+                "subject": subject,
+            }
+
 
