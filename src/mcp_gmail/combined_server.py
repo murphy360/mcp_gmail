@@ -105,10 +105,11 @@ async def health():
     """Health check endpoint."""
     try:
         client = get_client()
-        authenticated = client.authenticate()
+        # Test authentication by accessing the service
+        _ = client.service  # This will trigger auth if needed
         return {
             "status": "ok",
-            "authenticated": authenticated,
+            "authenticated": True,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "services": {
                 "rest_api": True,
