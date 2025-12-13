@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     
     ports:
-      - "8001:8000"
+      - "8001:8000"  # Both REST API and MCP SSE on same port
     
     volumes:
       # Persist OAuth credentials
@@ -28,6 +28,9 @@ services:
       # Home Assistant integration (optional)
       - HA_WEBHOOK_URL=${HA_WEBHOOK_URL:-}
       - HA_LONG_LIVED_TOKEN=${HA_LONG_LIVED_TOKEN:-}
+    
+    # Use combined server by default (REST + MCP SSE)
+    command: ["python", "-m", "mcp_gmail.combined_server"]
     
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]

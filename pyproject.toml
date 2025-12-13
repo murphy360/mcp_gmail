@@ -34,6 +34,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "httpx>=0.25.0",
     "aiofiles>=23.0.0",
+    "starlette>=0.27.0",
+    "sse-starlette>=1.6.0",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +51,8 @@ dev = [
 mcp-gmail = "mcp_gmail.server:main"
 mcp-gmail-auth = "mcp_gmail.auth:setup_oauth"
 mcp-gmail-api = "mcp_gmail.api:main"
+mcp-gmail-sse = "mcp_gmail.sse_server:main"
+mcp-gmail-combined = "mcp_gmail.combined_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_gmail"]
