@@ -94,6 +94,10 @@ app.add_middleware(
 app.mount("/mcp/messages", sse.handle_post_message)
 app.add_api_route("/mcp/sse", handle_sse, methods=["GET"])
 
+# Also expose at /sse for Home Assistant MCP integration compatibility
+app.mount("/messages", sse.handle_post_message)
+app.add_api_route("/sse", handle_sse, methods=["GET"])
+
 
 # ============================================================================
 # Health Check
