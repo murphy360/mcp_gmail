@@ -6,6 +6,9 @@ All tools are designed with strict JSON Schema compliance for Google Gemini comp
 - No 'Any' types or complex nested objects
 - Clear descriptions for all parameters
 - Simplified, flattened parameter structures
+
+The server uses a factory pattern to create fresh instances for each connection,
+ensuring proper session isolation.
 """
 
 import asyncio
@@ -26,10 +29,7 @@ from .models import SearchQuery
 
 logger = logging.getLogger(__name__)
 
-# Initialize server
-server = Server("gmail-mcp")
-
-# Global client instance
+# Global client instance (shared across all server instances for efficiency)
 _gmail_client: GmailClient | None = None
 
 
@@ -48,365 +48,358 @@ def get_gmail_client() -> GmailClient:
 
 
 # ============================================================================
-# TOOLS - Gemini-Compatible Schemas
+# TOOL DEFINITIONS - Gemini-Compatible Schemas
+# ============================================================================
+
+GMAIL_TOOLS = [
+    # -------------------------------------------------------------------------
+    # Email Search and Retrieval Tools
+    # -------------------------------------------------------------------------
+    Tool(
+        name="gmail_search",
+        description="Search emails using Gmail query syntax. Returns a list of matching emails with subject, sender, date, and snippet. Use Gmail search operators like 'from:', 'to:', 'subject:', 'is:unread', 'has:attachment', 'after:', 'before:'.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Gmail search query string. Examples: 'from:john@example.com', 'subject:meeting is:unread', 'after:2024/01/01 has:attachment'."
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of emails to return. Must be between 1 and 100. Default is 20."
+                }
+            },
+            "required": ["query"]
+        },
+    ),
+    Tool(
+        name="gmail_list_unread",
+        description="List unread emails from the inbox. Optionally filter by a pre-configured category such as navy, kids, financial, or action_required.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Filter by category name. Must be one of: navy, kids, financial, action_required. Leave empty for all unread emails."
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of emails to return. Default is 20."
+                }
+            },
+            "required": []
+        },
+    ),
+    Tool(
+        name="gmail_get_email",
+        description="Get the full content of a specific email by its Gmail message ID. Returns subject, sender, recipients, date, labels, and full body text.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "email_id": {
+                    "type": "string",
+                    "description": "The Gmail message ID obtained from search or list results."
+                }
+            },
+            "required": ["email_id"]
+        },
+    ),
+    # -------------------------------------------------------------------------
+    # Summary and Statistics Tools
+    # -------------------------------------------------------------------------
+    Tool(
+        name="gmail_daily_summary",
+        description="Generate a summary of recent emails organized by category. Shows unread counts and top emails in each category (Navy, Kids, Financial, Action Items).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "integer",
+                    "description": "How many hours back to look for emails. Default is 24 hours."
+                },
+                "include_read": {
+                    "type": "boolean",
+                    "description": "Whether to include already-read emails. Default is false (unread only)."
+                }
+            },
+            "required": []
+        },
+    ),
+    Tool(
+        name="gmail_category_summary",
+        description="Get a summary of unread emails in one specific category. Returns email count and list of emails matching that category.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Category to summarize. Must be one of: navy, kids, financial, action_required."
+                }
+            },
+            "required": ["category"]
+        },
+    ),
+    Tool(
+        name="gmail_inbox_stats",
+        description="Get current inbox statistics including total messages, unread count, starred count, and important message count.",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+            "required": []
+        },
+    ),
+    # -------------------------------------------------------------------------
+    # Label Tools - Simplified Individual Operations
+    # -------------------------------------------------------------------------
+    Tool(
+        name="gmail_list_labels",
+        description="List all Gmail labels including both system labels (INBOX, SENT, etc.) and user-created labels. Returns label names and IDs.",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+            "required": []
+        },
+    ),
+    Tool(
+        name="gmail_create_label",
+        description="Create a new Gmail label with optional custom colors. Returns the new label's ID.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "label_name": {
+                    "type": "string",
+                    "description": "Name for the new label. Use forward slashes for nested labels (e.g., 'Projects/Work')."
+                },
+                "background_color": {
+                    "type": "string",
+                    "description": "Hex color code for label background (e.g., '#16a765'). Optional."
+                },
+                "text_color": {
+                    "type": "string",
+                    "description": "Hex color code for label text (e.g., '#ffffff'). Optional."
+                }
+            },
+            "required": ["label_name"]
+        },
+    ),
+    Tool(
+        name="gmail_delete_label",
+        description="Delete a Gmail label by name or ID. Cannot delete system labels. Requires confirmation.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "label_name": {
+                    "type": "string",
+                    "description": "Name of the label to delete. Provide either label_name or label_id."
+                },
+                "label_id": {
+                    "type": "string",
+                    "description": "ID of the label to delete. Provide either label_name or label_id."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to actually delete. Set false to preview what would be deleted."
+                }
+            },
+            "required": ["confirm"]
+        },
+    ),
+    Tool(
+        name="gmail_rename_label",
+        description="Rename an existing Gmail label. Cannot rename system labels.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "label_name": {
+                    "type": "string",
+                    "description": "Current name of the label to rename. Provide either label_name or label_id."
+                },
+                "label_id": {
+                    "type": "string",
+                    "description": "ID of the label to rename. Provide either label_name or label_id."
+                },
+                "new_name": {
+                    "type": "string",
+                    "description": "New name for the label."
+                }
+            },
+            "required": ["new_name"]
+        },
+    ),
+    Tool(
+        name="gmail_add_label_to_messages",
+        description="Add a label to one or more messages. Can specify messages by IDs or by search query.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "label_name": {
+                    "type": "string",
+                    "description": "Name of the label to add. Provide either label_name or label_id."
+                },
+                "label_id": {
+                    "type": "string",
+                    "description": "ID of the label to add. Provide either label_name or label_id."
+                },
+                "message_ids": {
+                    "type": "string",
+                    "description": "Comma-separated list of message IDs to add the label to."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Gmail search query to find messages. Alternative to message_ids."
+                },
+                "max_messages": {
+                    "type": "integer",
+                    "description": "Maximum messages to modify when using query. Default 100, max 500."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to actually modify. Set false to preview."
+                }
+            },
+            "required": ["confirm"]
+        },
+    ),
+    Tool(
+        name="gmail_remove_label_from_messages",
+        description="Remove a label from one or more messages. Can specify messages by IDs or by search query.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "label_name": {
+                    "type": "string",
+                    "description": "Name of the label to remove. Provide either label_name or label_id."
+                },
+                "label_id": {
+                    "type": "string",
+                    "description": "ID of the label to remove. Provide either label_name or label_id."
+                },
+                "message_ids": {
+                    "type": "string",
+                    "description": "Comma-separated list of message IDs to remove the label from."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Gmail search query to find messages. Alternative to message_ids."
+                },
+                "max_messages": {
+                    "type": "integer",
+                    "description": "Maximum messages to modify when using query. Default 100, max 500."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to actually modify. Set false to preview."
+                }
+            },
+            "required": ["confirm"]
+        },
+    ),
+    # -------------------------------------------------------------------------
+    # Configuration Tools
+    # -------------------------------------------------------------------------
+    Tool(
+        name="gmail_get_categories",
+        description="List the configured email categories and their matching rules. Shows how emails are automatically categorized based on sender, subject, and labels.",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+            "required": []
+        },
+    ),
+    # -------------------------------------------------------------------------
+    # Mark as Read Tools - Separated by Input Type
+    # -------------------------------------------------------------------------
+    Tool(
+        name="gmail_mark_as_read_by_ids",
+        description="Mark specific emails as read using their message IDs. Requires confirmation to execute.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "message_ids": {
+                    "type": "string",
+                    "description": "Comma-separated list of Gmail message IDs to mark as read."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to actually mark as read. Set false to preview."
+                }
+            },
+            "required": ["message_ids", "confirm"]
+        },
+    ),
+    Tool(
+        name="gmail_mark_as_read_by_query",
+        description="Mark emails matching a search query as read. Use Gmail query syntax. Requires confirmation.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Gmail search query to find emails to mark as read. Examples: 'from:newsletter@example.com', 'older_than:7d is:unread'."
+                },
+                "max_emails": {
+                    "type": "integer",
+                    "description": "Maximum number of emails to mark as read. Default 100, max 500."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to actually mark as read. Set false to preview what would be marked."
+                }
+            },
+            "required": ["query", "confirm"]
+        },
+    ),
+    # -------------------------------------------------------------------------
+    # Send Email Tool
+    # -------------------------------------------------------------------------
+    Tool(
+        name="gmail_send_email",
+        description="Send an email. Can send new emails or reply to existing threads. Requires confirmation before sending.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "to": {
+                    "type": "string",
+                    "description": "Comma-separated list of recipient email addresses."
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "Email subject line."
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Email body text in plain text format."
+                },
+                "cc": {
+                    "type": "string",
+                    "description": "Comma-separated list of CC recipient email addresses. Optional."
+                },
+                "bcc": {
+                    "type": "string",
+                    "description": "Comma-separated list of BCC recipient email addresses. Optional."
+                },
+                "reply_to_message_id": {
+                    "type": "string",
+                    "description": "Message ID to reply to for threading. Optional."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to actually send the email. Set false to preview."
+                }
+            },
+            "required": ["to", "subject", "body", "confirm"]
+        },
+    ),
+]
+
+
+# ============================================================================
+# TOOL HANDLER
 # ============================================================================
 
 
-@server.list_tools()
-async def list_tools() -> list[Tool]:
-    """List available Gmail tools with Gemini-compatible schemas.
-    
-    All tools use explicit JSON Schema types with clear descriptions.
-    Complex operations are split into separate tools for clarity.
-    
-    Returns:
-        list[Tool]: List of available Gmail tools.
-    """
-    return [
-        # ---------------------------------------------------------------------
-        # Email Search and Retrieval Tools
-        # ---------------------------------------------------------------------
-        Tool(
-            name="gmail_search",
-            description="Search emails using Gmail query syntax. Returns a list of matching emails with subject, sender, date, and snippet. Use Gmail search operators like 'from:', 'to:', 'subject:', 'is:unread', 'has:attachment', 'after:', 'before:'.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Gmail search query string. Examples: 'from:john@example.com', 'subject:meeting is:unread', 'after:2024/01/01 has:attachment'."
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "Maximum number of emails to return. Must be between 1 and 100. Default is 20."
-                    }
-                },
-                "required": ["query"]
-            },
-        ),
-        Tool(
-            name="gmail_list_unread",
-            description="List unread emails from the inbox. Optionally filter by a pre-configured category such as navy, kids, financial, or action_required.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "category": {
-                        "type": "string",
-                        "description": "Filter by category name. Must be one of: navy, kids, financial, action_required. Leave empty for all unread emails."
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "Maximum number of emails to return. Default is 20."
-                    }
-                },
-                "required": []
-            },
-        ),
-        Tool(
-            name="gmail_get_email",
-            description="Get the full content of a specific email by its Gmail message ID. Returns subject, sender, recipients, date, labels, and full body text.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "email_id": {
-                        "type": "string",
-                        "description": "The Gmail message ID obtained from search or list results."
-                    }
-                },
-                "required": ["email_id"]
-            },
-        ),
-        # ---------------------------------------------------------------------
-        # Summary and Statistics Tools
-        # ---------------------------------------------------------------------
-        Tool(
-            name="gmail_daily_summary",
-            description="Generate a summary of recent emails organized by category. Shows unread counts and top emails in each category (Navy, Kids, Financial, Action Items).",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "hours": {
-                        "type": "integer",
-                        "description": "How many hours back to look for emails. Default is 24 hours."
-                    },
-                    "include_read": {
-                        "type": "boolean",
-                        "description": "Whether to include already-read emails. Default is false (unread only)."
-                    }
-                },
-                "required": []
-            },
-        ),
-        Tool(
-            name="gmail_category_summary",
-            description="Get a summary of unread emails in one specific category. Returns email count and list of emails matching that category.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "category": {
-                        "type": "string",
-                        "description": "Category to summarize. Must be one of: navy, kids, financial, action_required."
-                    }
-                },
-                "required": ["category"]
-            },
-        ),
-        Tool(
-            name="gmail_inbox_stats",
-            description="Get current inbox statistics including total messages, unread count, starred count, and important message count.",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            },
-        ),
-        # ---------------------------------------------------------------------
-        # Label Tools - Simplified Individual Operations
-        # ---------------------------------------------------------------------
-        Tool(
-            name="gmail_list_labels",
-            description="List all Gmail labels including both system labels (INBOX, SENT, etc.) and user-created labels. Returns label names and IDs.",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            },
-        ),
-        Tool(
-            name="gmail_create_label",
-            description="Create a new Gmail label with optional custom colors. Returns the new label's ID.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "label_name": {
-                        "type": "string",
-                        "description": "Name for the new label. Use forward slashes for nested labels (e.g., 'Projects/Work')."
-                    },
-                    "background_color": {
-                        "type": "string",
-                        "description": "Hex color code for label background (e.g., '#16a765'). Optional."
-                    },
-                    "text_color": {
-                        "type": "string",
-                        "description": "Hex color code for label text (e.g., '#ffffff'). Optional."
-                    }
-                },
-                "required": ["label_name"]
-            },
-        ),
-        Tool(
-            name="gmail_delete_label",
-            description="Delete a Gmail label by name or ID. Cannot delete system labels. Requires confirmation.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "label_name": {
-                        "type": "string",
-                        "description": "Name of the label to delete. Provide either label_name or label_id."
-                    },
-                    "label_id": {
-                        "type": "string",
-                        "description": "ID of the label to delete. Provide either label_name or label_id."
-                    },
-                    "confirm": {
-                        "type": "boolean",
-                        "description": "Must be true to actually delete. Set false to preview what would be deleted."
-                    }
-                },
-                "required": ["confirm"]
-            },
-        ),
-        Tool(
-            name="gmail_rename_label",
-            description="Rename an existing Gmail label. Cannot rename system labels.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "label_name": {
-                        "type": "string",
-                        "description": "Current name of the label to rename. Provide either label_name or label_id."
-                    },
-                    "label_id": {
-                        "type": "string",
-                        "description": "ID of the label to rename. Provide either label_name or label_id."
-                    },
-                    "new_name": {
-                        "type": "string",
-                        "description": "New name for the label."
-                    }
-                },
-                "required": ["new_name"]
-            },
-        ),
-        Tool(
-            name="gmail_add_label_to_messages",
-            description="Add a label to one or more messages. Can specify messages by IDs or by search query.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "label_name": {
-                        "type": "string",
-                        "description": "Name of the label to add. Provide either label_name or label_id."
-                    },
-                    "label_id": {
-                        "type": "string",
-                        "description": "ID of the label to add. Provide either label_name or label_id."
-                    },
-                    "message_ids": {
-                        "type": "string",
-                        "description": "Comma-separated list of message IDs to add the label to."
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Gmail search query to find messages. Alternative to message_ids."
-                    },
-                    "max_messages": {
-                        "type": "integer",
-                        "description": "Maximum messages to modify when using query. Default 100, max 500."
-                    },
-                    "confirm": {
-                        "type": "boolean",
-                        "description": "Must be true to actually modify. Set false to preview."
-                    }
-                },
-                "required": ["confirm"]
-            },
-        ),
-        Tool(
-            name="gmail_remove_label_from_messages",
-            description="Remove a label from one or more messages. Can specify messages by IDs or by search query.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "label_name": {
-                        "type": "string",
-                        "description": "Name of the label to remove. Provide either label_name or label_id."
-                    },
-                    "label_id": {
-                        "type": "string",
-                        "description": "ID of the label to remove. Provide either label_name or label_id."
-                    },
-                    "message_ids": {
-                        "type": "string",
-                        "description": "Comma-separated list of message IDs to remove the label from."
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Gmail search query to find messages. Alternative to message_ids."
-                    },
-                    "max_messages": {
-                        "type": "integer",
-                        "description": "Maximum messages to modify when using query. Default 100, max 500."
-                    },
-                    "confirm": {
-                        "type": "boolean",
-                        "description": "Must be true to actually modify. Set false to preview."
-                    }
-                },
-                "required": ["confirm"]
-            },
-        ),
-        # ---------------------------------------------------------------------
-        # Configuration Tools
-        # ---------------------------------------------------------------------
-        Tool(
-            name="gmail_get_categories",
-            description="List the configured email categories and their matching rules. Shows how emails are automatically categorized based on sender, subject, and labels.",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-                "required": []
-            },
-        ),
-        # ---------------------------------------------------------------------
-        # Mark as Read Tools - Separated by Input Type
-        # ---------------------------------------------------------------------
-        Tool(
-            name="gmail_mark_as_read_by_ids",
-            description="Mark specific emails as read using their message IDs. Requires confirmation to execute.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "message_ids": {
-                        "type": "string",
-                        "description": "Comma-separated list of Gmail message IDs to mark as read."
-                    },
-                    "confirm": {
-                        "type": "boolean",
-                        "description": "Must be true to actually mark as read. Set false to preview."
-                    }
-                },
-                "required": ["message_ids", "confirm"]
-            },
-        ),
-        Tool(
-            name="gmail_mark_as_read_by_query",
-            description="Mark emails matching a search query as read. Use Gmail query syntax. Requires confirmation.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Gmail search query to find emails to mark as read. Examples: 'from:newsletter@example.com', 'older_than:7d is:unread'."
-                    },
-                    "max_emails": {
-                        "type": "integer",
-                        "description": "Maximum number of emails to mark as read. Default 100, max 500."
-                    },
-                    "confirm": {
-                        "type": "boolean",
-                        "description": "Must be true to actually mark as read. Set false to preview what would be marked."
-                    }
-                },
-                "required": ["query", "confirm"]
-            },
-        ),
-        # ---------------------------------------------------------------------
-        # Send Email Tool
-        # ---------------------------------------------------------------------
-        Tool(
-            name="gmail_send_email",
-            description="Send an email. Can send new emails or reply to existing threads. Requires confirmation before sending.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "to": {
-                        "type": "string",
-                        "description": "Comma-separated list of recipient email addresses."
-                    },
-                    "subject": {
-                        "type": "string",
-                        "description": "Email subject line."
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "Email body text in plain text format."
-                    },
-                    "cc": {
-                        "type": "string",
-                        "description": "Comma-separated list of CC recipient email addresses. Optional."
-                    },
-                    "bcc": {
-                        "type": "string",
-                        "description": "Comma-separated list of BCC recipient email addresses. Optional."
-                    },
-                    "reply_to_message_id": {
-                        "type": "string",
-                        "description": "Message ID to reply to for threading. Optional."
-                    },
-                    "confirm": {
-                        "type": "boolean",
-                        "description": "Must be true to actually send the email. Set false to preview."
-                    }
-                },
-                "required": ["to", "subject", "body", "confirm"]
-            },
-        ),
-    ]
-
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Handle tool calls from MCP clients.
     
     Args:
@@ -771,32 +764,23 @@ async def _handle_label_modify(client: GmailClient, arguments: dict[str, Any], a
 # RESOURCES
 # ============================================================================
 
-
-@server.list_resources()
-async def list_resources() -> list[Resource]:
-    """List available Gmail resources.
-    
-    Returns:
-        list[Resource]: List of available resource endpoints.
-    """
-    return [
-        Resource(
-            uri="gmail://inbox/stats",
-            name="Inbox Statistics",
-            description="Current inbox statistics including unread count",
-            mimeType="application/json",
-        ),
-        Resource(
-            uri="gmail://summary/daily",
-            name="Daily Summary",
-            description="Daily email summary organized by category",
-            mimeType="application/json",
-        ),
-    ]
+GMAIL_RESOURCES = [
+    Resource(
+        uri="gmail://inbox/stats",
+        name="Inbox Statistics",
+        description="Current inbox statistics including unread count",
+        mimeType="application/json",
+    ),
+    Resource(
+        uri="gmail://summary/daily",
+        name="Daily Summary",
+        description="Daily email summary organized by category",
+        mimeType="application/json",
+    ),
+]
 
 
-@server.read_resource()
-async def read_resource(uri: str) -> str:
+async def handle_read_resource(uri: str) -> str:
     """Read a Gmail resource.
     
     Args:
@@ -817,6 +801,50 @@ async def read_resource(uri: str) -> str:
 
     else:
         raise ValueError(f"Unknown resource: {uri}")
+
+
+# ============================================================================
+# SERVER FACTORY
+# ============================================================================
+
+
+def create_mcp_server() -> Server:
+    """Create a new MCP server instance.
+    
+    This factory function creates a fresh Server instance with all tools
+    and resources registered. Use this to ensure each connection gets
+    its own server instance for proper session isolation.
+    
+    Returns:
+        Server: A new MCP server instance ready to handle connections.
+    """
+    server = Server("gmail-mcp")
+    
+    # Register tool list handler
+    @server.list_tools()
+    async def list_tools() -> list[Tool]:
+        return GMAIL_TOOLS
+    
+    # Register tool call handler
+    @server.call_tool()
+    async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+        return await handle_call_tool(name, arguments)
+    
+    # Register resource list handler
+    @server.list_resources()
+    async def list_resources() -> list[Resource]:
+        return GMAIL_RESOURCES
+    
+    # Register resource read handler
+    @server.read_resource()
+    async def read_resource(uri: str) -> str:
+        return await handle_read_resource(uri)
+    
+    return server
+
+
+# Legacy: Keep a module-level server for backwards compatibility with stdio mode
+server = create_mcp_server()
 
 
 # ============================================================================

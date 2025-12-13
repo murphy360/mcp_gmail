@@ -20,7 +20,7 @@ from starlette.routing import Mount, Route
 
 from .config import Settings, get_categories_config, get_settings
 from .gmail_client import GmailClient
-from .server import server as mcp_server  # The MCP Server instance
+from .server import create_mcp_server  # Factory function to create new server instances
 
 logger = logging.getLogger(__name__)
 
@@ -39,24 +39,69 @@ def get_client() -> GmailClient:
     return _gmail_client
 
 
-# SSE transport for MCP
-sse = SseServerTransport("/mcp/messages/")
+# SSE transports for MCP - separate instances for each endpoint path
+sse_mcp = SseServerTransport("/mcp/messages/")
+sse_root = SseServerTransport("/messages/")
 
 
-async def handle_sse(request: Request) -> Response:
-    """Handle SSE connections from MCP clients (Claude Desktop)."""
-    logger.info(f"New MCP SSE connection from {request.client}")
+async def handle_sse_mcp(request: Request) -> Response:
+    """Handle SSE connections at /mcp/sse endpoint."""
+    logger.info(f"New MCP SSE connection at /mcp/sse from {request.client}")
     
-    async with sse.connect_sse(
-        request.scope, 
-        request.receive, 
-        request._send
-    ) as streams:
-        await mcp_server.run(
-            streams[0],
-            streams[1],
-            mcp_server.create_initialization_options(),
-        )
+    # Create a fresh MCP server instance for this connection
+    mcp_server = create_mcp_server()
+    
+    try:
+        async with sse_mcp.connect_sse(
+            request.scope, 
+            request.receive, 
+            request._send
+        ) as streams:
+            await mcp_server.run(
+                streams[0],
+                streams[1],
+                mcp_server.create_initialization_options(),
+            )
+    except Exception as e:
+        logger.error(f"MCP SSE connection error at /mcp/sse: {e}")
+    finally:
+        logger.info(f"MCP SSE connection closed at /mcp/sse from {request.client}")
+    
+    return Response()
+
+
+async def handle_sse_root(request: Request) -> Response:
+    """Handle SSE connections at /sse endpoint (HA compatibility)."""
+    logger.info(f"New MCP SSE connection at /sse from {request.client}")
+    
+    # Create a fresh MCP server instance for this connection
+    mcp_server = create_mcp_server()
+    
+    try:
+        async with sse_root.connect_sse(
+            request.scope, 
+            request.receive, 
+            request._send
+        ) as streams:
+            await mcp_server.run(
+                streams[0],
+                streams[1],
+                mcp_server.create_initialization_options(),
+            )
+    except Exception as e:
+        logger.error(f"MCP SSE connection error at /sse: {e}")
+    finally:
+        logger.info(f"MCP SSE connection closed at /sse from {request.client}")
+    
+    return Response()
+                streams[0],
+                streams[1],
+                mcp_server.create_initialization_options(),
+            )
+    except Exception as e:
+        logger.error(f"MCP SSE connection error at /sse: {e}")
+    finally:
+        logger.info(f"MCP SSE connection closed at /sse from {request.client}")
     
     return Response()
 
@@ -91,12 +136,12 @@ app.add_middleware(
 )
 
 # Mount the MCP SSE routes
-app.mount("/mcp/messages", sse.handle_post_message)
-app.add_api_route("/mcp/sse", handle_sse, methods=["GET"])
+app.mount("/mcp/messages", sse_mcp.handle_post_message)
+app.add_api_route("/mcp/sse", handle_sse_mcp, methods=["GET"])
 
 # Also expose at /sse for Home Assistant MCP integration compatibility
-app.mount("/messages", sse.handle_post_message)
-app.add_api_route("/sse", handle_sse, methods=["GET"])
+app.mount("/messages", sse_root.handle_post_message)
+app.add_api_route("/sse", handle_sse_root, methods=["GET"])
 
 
 # ============================================================================
