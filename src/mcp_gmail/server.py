@@ -228,6 +228,61 @@ async def list_tools() -> list[Tool]:
                 "required": ["to", "subject", "body"],
             },
         ),
+        Tool(
+            name="gmail_manage_labels",
+            description="Manage Gmail labels: create, delete, rename labels, or add/remove labels from messages. "
+            "For system labels (INBOX, STARRED, etc.), only add/remove from messages is supported.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action to perform",
+                        "enum": ["create", "delete", "rename", "add_to_messages", "remove_from_messages", "list"],
+                    },
+                    "label_name": {
+                        "type": "string",
+                        "description": "Label name (for create, delete, rename, or finding label ID)",
+                    },
+                    "label_id": {
+                        "type": "string",
+                        "description": "Label ID (optional if label_name is provided)",
+                    },
+                    "new_name": {
+                        "type": "string",
+                        "description": "New name for the label (for rename action)",
+                    },
+                    "message_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Message IDs to modify (for add_to_messages/remove_from_messages)",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query to find messages (alternative to message_ids)",
+                    },
+                    "max_messages": {
+                        "type": "integer",
+                        "description": "Max messages to modify when using query (default: 100, max: 500)",
+                        "default": 100,
+                    },
+                    "background_color": {
+                        "type": "string",
+                        "description": "Hex color for label background (for create, e.g., '#16a765')",
+                    },
+                    "text_color": {
+                        "type": "string",
+                        "description": "Hex color for label text (for create, e.g., '#ffffff')",
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Must be true to execute destructive actions (delete, modify messages)",
+                        "default": False,
+                    },
+                },
+                "required": ["action"],
+            },
+        ),
     ]
 
 
@@ -447,6 +502,176 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                         type="text",
                         text=f"❌ Failed to send email.\n\nError: {result['error']}"
                     )]
+
+        elif name == "gmail_manage_labels":
+            action = arguments.get("action")
+            label_name = arguments.get("label_name")
+            label_id = arguments.get("label_id")
+            new_name = arguments.get("new_name")
+            message_ids = arguments.get("message_ids", [])
+            query = arguments.get("query")
+            max_messages = min(arguments.get("max_messages", 100), 500)
+            background_color = arguments.get("background_color")
+            text_color = arguments.get("text_color")
+            confirm = arguments.get("confirm", False)
+            
+            if not action:
+                return [TextContent(type="text", text="Error: 'action' is required.")]
+            
+            # List labels action
+            if action == "list":
+                labels = await client.get_labels()
+                lines = ["📁 Gmail Labels:\n"]
+                
+                # Separate system and user labels
+                system_labels = []
+                user_labels = []
+                for label in labels:
+                    if label.get("type") == "system":
+                        system_labels.append(label)
+                    else:
+                        user_labels.append(label)
+                
+                if system_labels:
+                    lines.append("**System Labels:**")
+                    for label in sorted(system_labels, key=lambda x: x.get("name", "")):
+                        lines.append(f"  • {label['name']} (ID: {label['id']})")
+                
+                if user_labels:
+                    lines.append("\n**User Labels:**")
+                    for label in sorted(user_labels, key=lambda x: x.get("name", "")):
+                        color_info = ""
+                        if label.get("color"):
+                            color_info = f" [color: {label['color'].get('backgroundColor', 'default')}]"
+                        lines.append(f"  • {label['name']} (ID: {label['id']}){color_info}")
+                
+                return [TextContent(type="text", text="\n".join(lines))]
+            
+            # Create label action
+            elif action == "create":
+                if not label_name:
+                    return [TextContent(type="text", text="Error: 'label_name' is required for create action.")]
+                
+                # Check if label already exists
+                existing = await client.find_label_by_name(label_name)
+                if existing:
+                    return [TextContent(
+                        type="text",
+                        text=f"❌ A label named '{label_name}' already exists (ID: {existing['id']})"
+                    )]
+                
+                result = await client.create_label(label_name, background_color, text_color)
+                if result["success"]:
+                    label = result["label"]
+                    return [TextContent(
+                        type="text",
+                        text=f"✅ Created label: {label['name']}\nID: {label['id']}"
+                    )]
+                else:
+                    return [TextContent(type="text", text=f"❌ Failed to create label: {result['error']}")]
+            
+            # Delete label action
+            elif action == "delete":
+                if not label_id and not label_name:
+                    return [TextContent(type="text", text="Error: 'label_id' or 'label_name' is required for delete action.")]
+                
+                # Find label by name if ID not provided
+                if not label_id:
+                    label = await client.find_label_by_name(label_name)
+                    if not label:
+                        return [TextContent(type="text", text=f"❌ Label not found: {label_name}")]
+                    label_id = label["id"]
+                    found_name = label["name"]
+                else:
+                    found_name = label_name or label_id
+                
+                if not confirm:
+                    return [TextContent(
+                        type="text",
+                        text=f"⚠️ Preview: Label '{found_name}' (ID: {label_id}) would be deleted.\n\nTo proceed, call this tool again with confirm=true"
+                    )]
+                
+                result = await client.delete_label(label_id)
+                if result["success"]:
+                    return [TextContent(type="text", text=f"✅ Deleted label: {found_name}")]
+                else:
+                    return [TextContent(type="text", text=f"❌ Failed to delete label: {result['error']}")]
+            
+            # Rename label action
+            elif action == "rename":
+                if not label_id and not label_name:
+                    return [TextContent(type="text", text="Error: 'label_id' or 'label_name' is required for rename action.")]
+                if not new_name:
+                    return [TextContent(type="text", text="Error: 'new_name' is required for rename action.")]
+                
+                # Find label by name if ID not provided
+                if not label_id:
+                    label = await client.find_label_by_name(label_name)
+                    if not label:
+                        return [TextContent(type="text", text=f"❌ Label not found: {label_name}")]
+                    label_id = label["id"]
+                    old_name = label["name"]
+                else:
+                    old_name = label_name or label_id
+                
+                result = await client.rename_label(label_id, new_name)
+                if result["success"]:
+                    return [TextContent(type="text", text=f"✅ Renamed label: {old_name} → {new_name}")]
+                else:
+                    return [TextContent(type="text", text=f"❌ Failed to rename label: {result['error']}")]
+            
+            # Add/Remove labels from messages
+            elif action in ["add_to_messages", "remove_from_messages"]:
+                if not label_id and not label_name:
+                    return [TextContent(type="text", text="Error: 'label_id' or 'label_name' is required.")]
+                if not message_ids and not query:
+                    return [TextContent(type="text", text="Error: 'message_ids' or 'query' is required.")]
+                
+                # Find label by name if ID not provided
+                if not label_id:
+                    label = await client.find_label_by_name(label_name)
+                    if not label:
+                        return [TextContent(type="text", text=f"❌ Label not found: {label_name}")]
+                    label_id = label["id"]
+                    label_display = label["name"]
+                else:
+                    label_display = label_name or label_id
+                
+                # Get message IDs from query if provided
+                if query and not message_ids:
+                    search_results = await client.search_emails(query, max_messages)
+                    if not search_results:
+                        return [TextContent(type="text", text=f"No emails found matching query: {query}")]
+                    message_ids = [email.id for email in search_results]
+                
+                action_verb = "add" if action == "add_to_messages" else "remove"
+                action_prep = "to" if action == "add_to_messages" else "from"
+                
+                if not confirm:
+                    return [TextContent(
+                        type="text",
+                        text=f"⚠️ Preview: Would {action_verb} label '{label_display}' {action_prep} {len(message_ids)} message(s).\n\nTo proceed, call this tool again with confirm=true"
+                    )]
+                
+                if action == "add_to_messages":
+                    result = await client.modify_message_labels(message_ids, add_label_ids=[label_id])
+                else:
+                    result = await client.modify_message_labels(message_ids, remove_label_ids=[label_id])
+                
+                if result["success"] > 0:
+                    return [TextContent(
+                        type="text",
+                        text=f"✅ {'Added' if action == 'add_to_messages' else 'Removed'} label '{label_display}' {action_prep} {result['success']} message(s)."
+                        + (f"\nErrors: {result['errors']}" if result['errors'] else "")
+                    )]
+                else:
+                    return [TextContent(
+                        type="text",
+                        text=f"❌ Failed to modify labels: {result['errors']}"
+                    )]
+            
+            else:
+                return [TextContent(type="text", text=f"Unknown action: {action}. Valid actions: create, delete, rename, add_to_messages, remove_from_messages, list")]
 
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]

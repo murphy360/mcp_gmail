@@ -386,6 +386,161 @@ class GmailClient:
             logger.error(f"Failed to get labels: {e}")
             raise
 
+    async def create_label(self, name: str, background_color: str | None = None, text_color: str | None = None) -> dict:
+        """Create a new Gmail label.
+        
+        Args:
+            name: Label name (can include / for nested labels)
+            background_color: Optional hex color for background (e.g., '#16a765')
+            text_color: Optional hex color for text (e.g., '#ffffff')
+            
+        Returns:
+            The created label object
+        """
+        try:
+            label_body = {
+                "name": name,
+                "labelListVisibility": "labelShow",
+                "messageListVisibility": "show",
+            }
+            
+            if background_color or text_color:
+                label_body["color"] = {}
+                if background_color:
+                    label_body["color"]["backgroundColor"] = background_color
+                if text_color:
+                    label_body["color"]["textColor"] = text_color
+            
+            result = self.service.users().labels().create(
+                userId="me",
+                body=label_body
+            ).execute()
+            
+            logger.info(f"Created label: {name} (ID: {result['id']})")
+            return {"success": True, "label": result}
+            
+        except HttpError as e:
+            logger.error(f"Failed to create label: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def delete_label(self, label_id: str) -> dict:
+        """Delete a Gmail label.
+        
+        Args:
+            label_id: The ID of the label to delete
+            
+        Returns:
+            Success/error dict
+        """
+        try:
+            self.service.users().labels().delete(
+                userId="me",
+                id=label_id
+            ).execute()
+            
+            logger.info(f"Deleted label: {label_id}")
+            return {"success": True, "deleted_label_id": label_id}
+            
+        except HttpError as e:
+            logger.error(f"Failed to delete label: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def rename_label(self, label_id: str, new_name: str) -> dict:
+        """Rename a Gmail label.
+        
+        Args:
+            label_id: The ID of the label to rename
+            new_name: The new name for the label
+            
+        Returns:
+            Updated label object or error
+        """
+        try:
+            result = self.service.users().labels().patch(
+                userId="me",
+                id=label_id,
+                body={"name": new_name}
+            ).execute()
+            
+            logger.info(f"Renamed label {label_id} to: {new_name}")
+            return {"success": True, "label": result}
+            
+        except HttpError as e:
+            logger.error(f"Failed to rename label: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def modify_message_labels(
+        self,
+        message_ids: list[str],
+        add_label_ids: list[str] | None = None,
+        remove_label_ids: list[str] | None = None
+    ) -> dict:
+        """Add or remove labels from messages.
+        
+        Args:
+            message_ids: List of message IDs to modify
+            add_label_ids: Label IDs to add to the messages
+            remove_label_ids: Label IDs to remove from the messages
+            
+        Returns:
+            Dict with success count and errors
+        """
+        if not message_ids:
+            return {"success": 0, "errors": [], "message": "No message IDs provided"}
+        
+        if not add_label_ids and not remove_label_ids:
+            return {"success": 0, "errors": [], "message": "No labels to add or remove"}
+        
+        results = {"success": 0, "errors": []}
+        
+        try:
+            body = {"ids": message_ids}
+            if add_label_ids:
+                body["addLabelIds"] = add_label_ids
+            if remove_label_ids:
+                body["removeLabelIds"] = remove_label_ids
+            
+            # Use batchModify for efficiency
+            if len(message_ids) <= 1000:
+                self.service.users().messages().batchModify(
+                    userId="me",
+                    body=body
+                ).execute()
+                results["success"] = len(message_ids)
+            else:
+                # Process in batches of 1000
+                for i in range(0, len(message_ids), 1000):
+                    batch = message_ids[i:i+1000]
+                    batch_body = body.copy()
+                    batch_body["ids"] = batch
+                    self.service.users().messages().batchModify(
+                        userId="me",
+                        body=batch_body
+                    ).execute()
+                    results["success"] += len(batch)
+                    
+        except HttpError as e:
+            logger.error(f"Failed to modify message labels: {e}")
+            results["errors"].append(str(e))
+            
+        return results
+
+    async def find_label_by_name(self, name: str) -> dict | None:
+        """Find a label by name (case-insensitive).
+        
+        Args:
+            name: Label name to search for
+            
+        Returns:
+            Label dict or None if not found
+        """
+        labels = await self.get_labels()
+        name_lower = name.lower()
+        for label in labels:
+            if label.get("name", "").lower() == name_lower:
+                return label
+        return None
+
     async def get_daily_summary(
         self, lookback_hours: Optional[int] = None, include_read: bool = False
     ) -> DailySummary:
