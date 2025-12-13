@@ -194,7 +194,7 @@ automation:
 
 ## MCP Server Usage
 
-The MCP server can be used with Claude Desktop or other MCP clients.
+The MCP server can be used with Claude Desktop, Home Assistant, or other MCP clients via SSE transport.
 
 ### Claude Desktop Configuration
 
@@ -204,28 +204,38 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
 {
   "mcpServers": {
     "gmail": {
-      "command": "docker",
-      "args": [
-        "exec", "-i", "gmail-mcp-server",
-        "python", "-m", "mcp_gmail.server"
-      ]
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://YOUR_SERVER_IP:8001/mcp/sse", "--allow-http"]
     }
   }
 }
 ```
 
+### Home Assistant MCP Integration
+
+The server exposes SSE endpoints for MCP connections:
+- `/mcp/sse` - Primary MCP SSE endpoint
+- `/sse` - Alias endpoint for Home Assistant compatibility
+
 ### Available MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `gmail_search` | Search emails with query |
-| `gmail_list_unread` | List unread emails by category |
-| `gmail_get_email` | Get full email content |
-| `gmail_daily_summary` | Generate categorized summary |
-| `gmail_category_summary` | Summary for one category |
+| `gmail_search` | Search emails with query and optional filters |
+| `gmail_get_email` | Get full email content by ID |
+| `gmail_list_unread` | List unread emails with optional category filter |
+| `gmail_daily_summary` | Generate categorized daily summary |
+| `gmail_category_summary` | Summary for a specific category |
 | `gmail_inbox_stats` | Current inbox statistics |
-| `gmail_get_labels` | List Gmail labels |
+| `gmail_list_labels` | List all Gmail labels |
+| `gmail_create_label` | Create a new Gmail label |
+| `gmail_delete_label` | Delete a Gmail label |
 | `gmail_get_categories` | Show configured categories |
+| `gmail_mark_as_read_by_ids` | Mark specific emails as read by IDs |
+| `gmail_mark_as_read_by_query` | Mark emails matching a query as read |
+| `gmail_send_email` | Send an email (plain text or HTML) |
+| `gmail_add_labels_to_messages` | Add labels to messages |
+| `gmail_remove_labels_from_messages` | Remove labels from messages |
 
 ### Example Queries
 
@@ -314,8 +324,11 @@ pytest --cov=mcp_gmail
 - [x] Category-based summaries
 - [x] Home Assistant REST API
 - [x] Docker deployment
-- [ ] Email sending (Phase 2)
-- [ ] Gmail labels modification
+- [x] Email sending
+- [x] Gmail labels management (create, delete, add to messages, remove from messages)
+- [x] Mark emails as read
+- [x] SSE transport with session isolation
+- [x] Gemini-compatible tool schemas
 - [ ] Scheduled summary notifications
 - [ ] IMAP fallback option
 
