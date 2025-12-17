@@ -724,6 +724,96 @@ class GmailClient:
             logger.error(f"Failed to search and mark emails: {e}")
             return {"matched": 0, "success": 0, "errors": [str(e)], "message": f"Error: {e}"}
 
+    async def mark_as_unread(self, message_ids: list[str]) -> dict:
+        """Mark one or more emails as unread by adding the UNREAD label.
+        
+        Args:
+            message_ids: List of Gmail message IDs to mark as unread
+            
+        Returns:
+            Dict with success count and any errors
+        """
+        if not message_ids:
+            return {"success": 0, "errors": [], "message": "No message IDs provided"}
+        
+        results = {"success": 0, "errors": []}
+        
+        try:
+            # Use batchModify for efficiency (up to 1000 at a time)
+            if len(message_ids) <= 1000:
+                self.service.users().messages().batchModify(
+                    userId="me",
+                    body={
+                        "ids": message_ids,
+                        "addLabelIds": ["UNREAD"]
+                    }
+                ).execute()
+                results["success"] = len(message_ids)
+            else:
+                # Process in batches of 1000
+                for i in range(0, len(message_ids), 1000):
+                    batch = message_ids[i:i+1000]
+                    self.service.users().messages().batchModify(
+                        userId="me",
+                        body={
+                            "ids": batch,
+                            "addLabelIds": ["UNREAD"]
+                        }
+                    ).execute()
+                    results["success"] += len(batch)
+                    
+        except HttpError as e:
+            logger.error(f"Failed to mark emails as unread: {e}")
+            results["errors"].append(str(e))
+            
+        return results
+
+    async def mark_as_unread_by_query(self, query: str, max_emails: int = 100) -> dict:
+        """Mark emails matching a query as unread.
+        
+        Args:
+            query: Gmail search query (e.g., "from:newsletter@example.com", "older_than:7d")
+            max_emails: Maximum number of emails to mark as unread (safety limit)
+            
+        Returns:
+            Dict with success count, matched count, and any errors
+        """
+        try:
+            # First, find matching emails (that are currently read)
+            results = (
+                self.service.users()
+                .messages()
+                .list(userId="me", q=f"{query} -is:unread", maxResults=max_emails)
+                .execute()
+            )
+            
+            messages = results.get("messages", [])
+            if not messages:
+                return {
+                    "matched": 0,
+                    "success": 0,
+                    "errors": [],
+                    "message": "No read emails matched the query"
+                }
+            
+            message_ids = [msg["id"] for msg in messages]
+            
+            # Mark them as unread
+            mark_result = await self.mark_as_unread(message_ids)
+            mark_result["matched"] = len(messages)
+            
+            # Check if there might be more
+            if len(messages) == max_emails:
+                mark_result["message"] = f"Marked {mark_result['success']} emails as unread. There may be more matching emails (limit was {max_emails})."
+            else:
+                mark_result["message"] = f"Marked {mark_result['success']} emails as unread."
+                
+            return mark_result
+            
+        except HttpError as e:
+            logger.error(f"Failed to search and mark emails as unread: {e}")
+            return {"matched": 0, "success": 0, "errors": [str(e)], "message": f"Error: {e}"}
+
     async def send_email(
         self,
         to: list[str],

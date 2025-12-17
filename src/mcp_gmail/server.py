@@ -351,6 +351,49 @@ GMAIL_TOOLS = [
         },
     ),
     # -------------------------------------------------------------------------
+    # Mark as Unread Tools - Separated by Input Type
+    # -------------------------------------------------------------------------
+    Tool(
+        name="gmail_mark_as_unread_by_ids",
+        description="Mark specific emails as unread using their message IDs. Requires confirmation to execute.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "message_ids": {
+                    "type": "string",
+                    "description": "Comma-separated list of Gmail message IDs to mark as unread."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to actually mark as unread. Set false to preview."
+                }
+            },
+            "required": ["message_ids", "confirm"]
+        },
+    ),
+    Tool(
+        name="gmail_mark_as_unread_by_query",
+        description="Mark emails matching a search query as unread. Use Gmail query syntax. Requires confirmation.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Gmail search query to find emails to mark as unread. Examples: 'from:newsletter@example.com', 'subject:important'."
+                },
+                "max_emails": {
+                    "type": "integer",
+                    "description": "Maximum number of emails to mark as unread. Default 100, max 500."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to actually mark as unread. Set false to preview what would be marked."
+                }
+            },
+            "required": ["query", "confirm"]
+        },
+    ),
+    # -------------------------------------------------------------------------
     # Send Email Tool
     # -------------------------------------------------------------------------
     Tool(
@@ -623,6 +666,69 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
                 return [TextContent(
                     type="text",
                     text=f"Success: {result['message']}\nMatched: {result['matched']}, Marked as read: {result['success']}"
+                    + (f", Errors: {result['errors']}" if result['errors'] else "")
+                )]
+
+        # -----------------------------------------------------------------
+        # Mark as Unread
+        # -----------------------------------------------------------------
+        elif name == "gmail_mark_as_unread_by_ids":
+            message_ids_str = arguments.get("message_ids", "")
+            confirm = arguments.get("confirm", False)
+            
+            if not message_ids_str:
+                return [TextContent(type="text", text="Error: message_ids is required.")]
+            
+            # Parse comma-separated IDs
+            message_ids = [mid.strip() for mid in message_ids_str.split(",") if mid.strip()]
+            
+            if not message_ids:
+                return [TextContent(type="text", text="Error: No valid message IDs provided.")]
+            
+            if not confirm:
+                return [TextContent(
+                    type="text",
+                    text=f"Preview: {len(message_ids)} email(s) would be marked as unread. Set confirm=true to proceed."
+                )]
+            
+            result = await client.mark_as_unread(message_ids)
+            return [TextContent(
+                type="text",
+                text=f"Success: Marked {result['success']} email(s) as unread."
+                + (f" Errors: {result['errors']}" if result['errors'] else "")
+            )]
+
+        elif name == "gmail_mark_as_unread_by_query":
+            query = arguments.get("query", "")
+            max_emails = min(arguments.get("max_emails", 100), 500)
+            confirm = arguments.get("confirm", False)
+            
+            if not query:
+                return [TextContent(type="text", text="Error: query is required.")]
+            
+            if not confirm:
+                # Preview mode - show what would be marked
+                search_results = await client.search_emails(f"{query} -is:unread", max_emails)
+                if not search_results:
+                    return [TextContent(type="text", text=f"No read emails match the query: {query}")]
+                
+                lines = [f"Preview: {len(search_results)} email(s) would be marked as unread:\n"]
+                for email in search_results[:20]:
+                    lines.append(f"- {email.subject}")
+                    lines.append(f"  From: {email.sender.email}")
+                    lines.append(f"  Date: {email.date.strftime('%Y-%m-%d %H:%M')}")
+                    lines.append("")
+                
+                if len(search_results) > 20:
+                    lines.append(f"... and {len(search_results) - 20} more\n")
+                
+                lines.append("Set confirm=true to proceed.")
+                return [TextContent(type="text", text="\n".join(lines))]
+            else:
+                result = await client.mark_as_unread_by_query(query, max_emails)
+                return [TextContent(
+                    type="text",
+                    text=f"Success: {result['message']}\nMatched: {result['matched']}, Marked as unread: {result['success']}"
                     + (f", Errors: {result['errors']}" if result['errors'] else "")
                 )]
 
