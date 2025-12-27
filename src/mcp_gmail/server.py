@@ -149,6 +149,38 @@ GMAIL_TOOLS = [
             "required": []
         },
     ),
+    Tool(
+        name="gmail_get_priorities",
+        description="Get priority emails based on the 'known_priorities' category in categories.yaml. Searches for emails matching configured senders (Navy, schools, family) and subjects (orders, deployments, scouts, financial alerts). Automatically excludes routine items like autopay confirmations.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "days_back": {
+                    "type": "integer",
+                    "description": "How many days back to search for priority emails. Default is 7 days."
+                },
+                "include_read": {
+                    "type": "boolean",
+                    "description": "Whether to include already-read emails. Default is false (unread only)."
+                }
+            },
+            "required": []
+        },
+    ),
+    Tool(
+        name="gmail_get_packages",
+        description="Get package delivery and shipping notification emails. Finds tracking info from Amazon, UPS, FedEx, USPS, and other carriers. Always includes read emails since you want to track all pending deliveries.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "days_back": {
+                    "type": "integer",
+                    "description": "How many days back to search for package emails. Default is 14 days."
+                }
+            },
+            "required": []
+        },
+    ),
     # -------------------------------------------------------------------------
     # Label Tools - Simplified Individual Operations
     # -------------------------------------------------------------------------
@@ -503,6 +535,172 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
         elif name == "gmail_inbox_stats":
             stats = await client.get_inbox_stats()
             return [TextContent(type="text", text=_format_inbox_stats(stats))]
+
+        elif name == "gmail_get_priorities":
+            days_back = arguments.get("days_back", 7)
+            include_read = arguments.get("include_read", False)
+            
+            # Get the known_priorities category from config
+            categories_config = get_categories_config()
+            priority_cat = categories_config.categories.get("known_priorities")
+            
+            if not priority_cat:
+                return [TextContent(
+                    type="text",
+                    text="Error: 'known_priorities' category not found in categories.yaml"
+                )]
+            
+            # Build query from category matchers
+            query_parts = []
+            
+            # Add sender patterns
+            for sender in priority_cat.matcher.senders:
+                query_parts.append(f"from:{sender}")
+            
+            # Add subject patterns  
+            for subject in priority_cat.matcher.subjects:
+                # Wrap multi-word subjects in quotes
+                if " " in subject:
+                    query_parts.append(f'subject:"{subject}"')
+                else:
+                    query_parts.append(f"subject:{subject}")
+            
+            # Add label patterns
+            for label in priority_cat.matcher.labels:
+                if label.lower() == "starred":
+                    query_parts.append("is:starred")
+                elif label.lower() == "important":
+                    query_parts.append("is:important")
+                else:
+                    query_parts.append(f"label:{label}")
+            
+            if not query_parts:
+                return [TextContent(
+                    type="text",
+                    text="Error: 'known_priorities' category has no matchers defined"
+                )]
+            
+            # Add date filter
+            from datetime import datetime, timedelta
+            date_after = (datetime.now() - timedelta(days=days_back)).strftime("%Y/%m/%d")
+            
+            # Combine queries with OR
+            combined_query = f"({' OR '.join(query_parts)}) after:{date_after}"
+            
+            # Exclude routine/junk
+            combined_query += " -subject:(autopay) -subject:(scheduled payment) -subject:(payment received) -subject:(statement ready) -category:promotions"
+            
+            if not include_read:
+                combined_query += " is:unread"
+            
+            # Search for priority emails
+            emails = await client.search_emails(combined_query, max_results=50)
+            
+            if not emails:
+                return [TextContent(
+                    type="text", 
+                    text=f"No priority emails found in the last {days_back} days."
+                )]
+            
+            # Format results
+            lines = [f"📌 **Priority Emails** (last {days_back} days)\n"]
+            lines.append(f"Found {len(emails)} priority item(s):\n")
+            
+            for email in emails:
+                status = "📩" if not email.is_read else "📧"
+                starred = "⭐ " if email.is_starred else ""
+                lines.append(f"{status} {starred}**{email.subject}**")
+                lines.append(f"   From: {email.sender.name or email.sender.email}")
+                lines.append(f"   Date: {email.date.strftime('%Y-%m-%d %H:%M')}")
+                lines.append(f"   ID: `{email.id}`")
+                if email.snippet:
+                    lines.append(f"   Preview: {email.snippet[:100]}...")
+                lines.append("")
+            
+            return [TextContent(type="text", text="\n".join(lines))]
+
+        elif name == "gmail_get_packages":
+            days_back = arguments.get("days_back", 14)
+            
+            # Build query for package/shipping emails from common carriers and retailers
+            package_queries = [
+                # Amazon
+                'from:shipment-tracking@amazon.com',
+                'from:ship-confirm@amazon.com',
+                'from:order-update@amazon.com',
+                'subject:"shipped" from:amazon',
+                'subject:"out for delivery" from:amazon',
+                'subject:"arriving" from:amazon',
+                'subject:"delivered" from:amazon',
+                # UPS
+                'from:ups.com subject:delivery',
+                'from:ups.com subject:shipped',
+                'from:ups.com subject:tracking',
+                # FedEx
+                'from:fedex.com subject:delivery',
+                'from:fedex.com subject:shipped',
+                'from:fedex.com subject:tracking',
+                # USPS
+                'from:usps.com subject:delivery',
+                'from:usps.com subject:shipped',
+                'from:usps.com subject:tracking',
+                'from:informeddelivery@usps.com',
+                # DHL
+                'from:dhl.com subject:delivery',
+                'from:dhl.com subject:shipment',
+                # Generic shipping terms
+                'subject:"your order has shipped"',
+                'subject:"your package"',
+                'subject:"shipment notification"',
+                'subject:"tracking number"',
+                'subject:"out for delivery"',
+                'subject:"expected delivery"',
+            ]
+            
+            # Add date filter
+            from datetime import datetime, timedelta
+            date_after = (datetime.now() - timedelta(days=days_back)).strftime("%Y/%m/%d")
+            
+            # Combine queries - always include read emails for package tracking
+            combined_query = f"({' OR '.join(package_queries)}) after:{date_after}"
+            
+            # Search for package emails
+            emails = await client.search_emails(combined_query, max_results=50)
+            
+            if not emails:
+                return [TextContent(
+                    type="text", 
+                    text=f"No package/shipping emails found in the last {days_back} days."
+                )]
+            
+            # Format results
+            lines = [f"📦 **Package Tracking Emails** (last {days_back} days)\n"]
+            lines.append(f"Found {len(emails)} shipping/delivery email(s):\n")
+            
+            for email in emails:
+                status = "📩" if not email.is_read else "📧"
+                # Try to identify delivery status from subject
+                subject_lower = email.subject.lower()
+                if "delivered" in subject_lower:
+                    icon = "✅"
+                elif "out for delivery" in subject_lower:
+                    icon = "🚚"
+                elif "arriving" in subject_lower or "expected" in subject_lower:
+                    icon = "📅"
+                elif "shipped" in subject_lower:
+                    icon = "📤"
+                else:
+                    icon = "📦"
+                
+                lines.append(f"{status} {icon} **{email.subject}**")
+                lines.append(f"   From: {email.sender.name or email.sender.email}")
+                lines.append(f"   Date: {email.date.strftime('%Y-%m-%d %H:%M')}")
+                lines.append(f"   ID: `{email.id}`")
+                if email.snippet:
+                    lines.append(f"   Preview: {email.snippet[:120]}...")
+                lines.append("")
+            
+            return [TextContent(type="text", text="\n".join(lines))]
 
         # -----------------------------------------------------------------
         # Label Management - Individual Operations
@@ -1003,7 +1201,31 @@ def _format_full_email(email) -> str:
         att_list = ", ".join(a.filename for a in email.attachments)
         attachments = f"\nAttachments: {att_list}"
 
-    body = email.body_text or "(No text content)"
+    # Try plain text first, fall back to HTML with tags stripped
+    body = email.body_text
+    if not body and email.body_html:
+        # Strip HTML tags to get readable text
+        import re
+        # Remove script and style elements
+        html = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', email.body_html, flags=re.DOTALL | re.IGNORECASE)
+        # Replace <br> and </p> with newlines
+        html = re.sub(r'<br\s*/?>', '\n', html, flags=re.IGNORECASE)
+        html = re.sub(r'</p>', '\n\n', html, flags=re.IGNORECASE)
+        html = re.sub(r'</div>', '\n', html, flags=re.IGNORECASE)
+        html = re.sub(r'</tr>', '\n', html, flags=re.IGNORECASE)
+        html = re.sub(r'</li>', '\n', html, flags=re.IGNORECASE)
+        # Remove all remaining HTML tags
+        html = re.sub(r'<[^>]+>', '', html)
+        # Decode HTML entities
+        import html as html_module
+        body = html_module.unescape(html)
+        # Clean up whitespace
+        body = re.sub(r'\n\s*\n', '\n\n', body)  # Collapse multiple newlines
+        body = body.strip()
+    
+    if not body:
+        body = "(No text content)"
+    
     if len(body) > 2000:
         body = body[:2000] + "\n\n... [truncated]"
 

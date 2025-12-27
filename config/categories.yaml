@@ -5,7 +5,7 @@ categories:
   navy:
     name: "Navy / Military"
     description: "Navy and military-related communications"
-    priority: high
+    priority: critical
     matchers:
       senders:
         - "@navy.mil"
@@ -96,7 +96,7 @@ categories:
   action_required:
     name: "Action Items"
     description: "Emails requiring response or action"
-    priority: critical
+    priority: high
     matchers:
       subjects:
         - "action required"
@@ -105,19 +105,115 @@ categories:
         - "please respond"
         - "urgent"
         - "deadline"
-        - "due date"
-        - "reminder"
-        - "follow up"
-        - "follow-up"
-        - "waiting for"
         - "approval needed"
-        - "sign"
-        - "confirm"
         - "RSVP"
       labels:
         - "Action"
         - "TODO"
         - "Follow Up"
+
+  # True priority items - specific high-value emails that need attention
+  known_priorities:
+    name: "Known Priorities"
+    description: "Specific high-value emails from known important sources"
+    priority: critical
+    matchers:
+      senders:
+        # Navy/Military
+        - "@navy.mil"
+        - "@us.navy.mil"
+        - "@mail.mil"
+        - "@usmc.mil"
+        # Schools
+        - "parentsquare"
+        - "TCSD"
+        - "@tcsdnc.org"
+        # Scouts
+        - "scoutbook"
+        - "scouting.org"
+        # Family/Personal
+        - "annabelle"
+        - "finnegan"
+        - "cathy"
+        - "cathleen"
+        - "crilley"
+        - "bracho"
+        - "murphy"
+        # Travel - Airlines & Hotels
+        - "@enterprise.com"
+        - "@enterpriserentacar.com"
+        - "@united.com"
+        - "@unitedairlines.com"
+        - "@marriott.com"
+        - "@marriottrewards.com"
+        - "@delta.com"
+        - "@aa.com"
+        - "@southwest.com"
+        - "@hilton.com"
+        - "@hyatt.com"
+        # Investing/Financial Advisor
+        - "jonathan new"
+        # Utilities & Bills
+        - "ohio edison"
+        - "firstenergy"
+        - "google fi"
+        - "googlefi"
+        - "@fi.google.com"
+        - "spectrum"
+        - "duke energy"
+        - "dominion energy"
+        - "water utility"
+        - "gas company"
+      subjects:
+        # Navy
+        - "OPSUM"
+        - "NAVADMIN"
+        - "NR C3F"
+        - "Navy Reserve"
+        - "NFAAS"
+        - "orders"
+        - "PCS"
+        - "deployment"
+        - "drill"
+        - "muster"
+        - "recall"
+        - "evaluation"
+        - "fitness report"
+        # Schools
+        - "Dodge Elementary"
+        - "R. B. Chamberlin"
+        - "Chamberlin Middle"
+        - "Troop 223"
+        - "Troop 500"
+        - "scouts"
+        # Financial action items (non-routine)
+        - "payment failed"
+        - "payment declined"
+        - "unusual activity"
+        - "fraud alert"
+        - "security alert"
+        - "overdue"
+        - "suspended"
+        - "collections"
+        - "dispute"
+        - "policy renewal"
+        - "auto renewal"
+        - "insurance renewal"
+        # Travel - Bookings & Trips
+        - "reservation confirmed"
+        - "booking confirmation"
+        - "itinerary"
+        - "flight confirmation"
+        - "trip confirmation"
+        - "check-in reminder"
+        - "upcoming trip"
+        - "rental confirmation"
+        - "hotel confirmation"
+        - "e-ticket"
+      labels:
+        - "Important"
+        - "Priority"
+        - "Starred"
 
 # Default category for uncategorized emails
 default_category:
